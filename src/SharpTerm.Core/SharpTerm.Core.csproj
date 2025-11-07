@@ -1,17 +1,32 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>13.0</LangVersion>
-    <PackageId>SharpTerm</PackageId>
-    <Version>0.1.0-alpha</Version>
-    <Authors>SharpTerm Contributors</Authors>
-    <Description>Modern cross-platform TUI library for .NET</Description>
-    <PackageTags>tui;terminal;console;ui</PackageTags>
-    <RepositoryUrl>https://github.com/yourusername/SharpTerm</RepositoryUrl>
+    
+    <!-- Package Information -->
+    <PackageId>SharpTerm.Core</PackageId>
+    <Version>1.0.1</Version>
+    <Authors>Alex Barnes</Authors>
+    <Company>E2E</Company>
+    <Description>A modern, cross-platform Terminal User Interface (TUI) library for .NET 9 with rich widget support, event-driven architecture, and optimized rendering.</Description>
+    <PackageTags>tui;terminal;console;ui;ansi;widgets;crossplatform</PackageTags>
+    <PackageProjectUrl>https://github.com/Memetic0/SharpTerm</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Memetic0/SharpTerm</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>Initial release with core TUI functionality and six widgets.</PackageReleaseNotes>
+    <!-- Package Build Settings -->
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    
+    <!-- Build Settings -->
+    <Deterministic>true</Deterministic>
   </PropertyGroup>
-
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 </Project>
