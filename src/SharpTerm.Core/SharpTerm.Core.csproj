@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>13.0</LangVersion>
+    <PackageId>SharpTerm</PackageId>
+    <Version>0.1.0-alpha</Version>
+    <Authors>SharpTerm Contributors</Authors>
+    <Description>Modern cross-platform TUI library for .NET</Description>
+    <PackageTags>tui;terminal;console;ui</PackageTags>
+    <RepositoryUrl>https://github.com/yourusername/SharpTerm</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+</Project>
