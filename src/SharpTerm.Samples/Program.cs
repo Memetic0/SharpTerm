@@ -1,5 +1,6 @@
 using SharpTerm.Core;
 using SharpTerm.Core.Widgets;
+using SharpTerm.Samples.Demos.ArchitectureDemo;
 using SharpTerm.Samples.Demos.FormInput;
 using SharpTerm.Samples.Demos.HelloWorld;
 using SharpTerm.Samples.Demos.ProgressDemo;
@@ -17,6 +18,7 @@ public static class Program
         ("TODO App", "Full-featured task management app", TodoAppDemo.Run),
         ("Progress Demo", "Progress bar demonstration", ProgressDemo.Run),
         ("Form Input", "User registration form example", FormInputDemo.Run),
+        ("Architecture Demo", "New architecture & performance features", SimpleArchitectureDemo.Run),
     };
 
     public static void Main(string[] args)

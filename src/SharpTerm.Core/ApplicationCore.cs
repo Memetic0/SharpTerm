@@ -1,4 +1,5 @@
 using SharpTerm.Core.ApplicationLogic;
+using SharpTerm.Core.Performance;
 
 namespace SharpTerm.Core;
 
@@ -9,14 +10,16 @@ public class Application
 {
     private readonly ITerminalDriver _driver;
     private readonly List<Widget> _widgets = new();
-    private readonly HashSet<Widget> _dirtyWidgets = new();
+    private readonly LockFreeDirtyTracker _dirtyWidgets = new();
+    private readonly SpatialIndex _spatialIndex;
+    private readonly TerminalDimensionCache _dimensionCache = new();
+    private readonly RenderFrameBudget _frameBudget = new(targetFps: 60);
+    private readonly MouseEventOptimizer _mouseOptimizer = new();
     private bool _running;
     private int _focusedIndex = -1;
     private bool _needsFullRedraw = true;
     private bool _debugMode;
     private StreamWriter? _debugLogWriter;
-    private int _lastWidth;
-    private int _lastHeight;
 
     /// <summary>
     /// Event raised when the terminal is resized.
@@ -27,8 +30,9 @@ public class Application
     {
         _driver = driver ?? new AnsiTerminalDriver();
         _debugMode = debugMode;
-        _lastWidth = Console.WindowWidth;
-        _lastHeight = Console.WindowHeight;
+
+        // Initialize spatial index with terminal bounds
+        _spatialIndex = new SpatialIndex(_dimensionCache.GetBounds());
 
         if (_debugMode)
         {
@@ -74,13 +78,11 @@ public class Application
         {
             if (s is Widget w)
             {
-                lock (_dirtyWidgets)
-                {
-                    _dirtyWidgets.Add(w);
-                }
+                _dirtyWidgets.MarkDirty(w);
             }
         };
         _widgets.Add(widget);
+        _spatialIndex.Insert(widget);
         _needsFullRedraw = true;
     }
 
@@ -90,10 +92,8 @@ public class Application
     public void RemoveWidget(Widget widget)
     {
         _widgets.Remove(widget);
-        lock (_dirtyWidgets)
-        {
-            _dirtyWidgets.Remove(widget);
-        }
+        _spatialIndex.Remove(widget);
+        // No need to remove from dirty tracker - GetAndClearDirtyWidgets handles cleanup
         _needsFullRedraw = true;
     }
 
@@ -117,26 +117,27 @@ public class Application
         {
             while (_running)
             {
+                _frameBudget.BeginFrame();
+
                 CheckForResize();
 
                 if (_needsFullRedraw)
                 {
                     Renderer.RenderAll(_driver, _widgets);
                     _needsFullRedraw = false;
-                    lock (_dirtyWidgets)
-                    {
-                        _dirtyWidgets.Clear();
-                    }
+                    _dirtyWidgets.GetAndClearDirtyWidgets();
                 }
                 else
                 {
-                    Renderer.RenderDirtyWidgets(_driver, _dirtyWidgets);
+                    var dirtyWidgets = _dirtyWidgets.GetAndClearDirtyWidgets().ToList();
+                    Renderer.RenderDirtyWidgets(_driver, dirtyWidgets);
                 }
 
                 bool shouldStop = InputProcessor.ProcessInput(
                     _driver,
                     _widgets,
                     _dirtyWidgets,
+                    _spatialIndex,
                     _focusedIndex,
                     DebugLog,
                     Stop,
@@ -154,7 +155,7 @@ public class Application
                     break;
                 }
 
-                Thread.Sleep(16); // ~60 FPS
+                _frameBudget.EndFrame();
             }
         }
         finally
@@ -178,14 +179,15 @@ public class Application
 
     private void CheckForResize()
     {
-        int currentWidth = Console.WindowWidth;
-        int currentHeight = Console.WindowHeight;
-        if (currentWidth != _lastWidth || currentHeight != _lastHeight)
+        if (_dimensionCache.HasChanged())
         {
-            _lastWidth = currentWidth;
-            _lastHeight = currentHeight;
+            _dimensionCache.ForceUpdate();
+            var bounds = _dimensionCache.GetBounds();
             _needsFullRedraw = true;
-            DebugLog($"Terminal resized to {currentWidth}x{currentHeight}");
+            DebugLog($"Terminal resized to {bounds.Width}x{bounds.Height}");
+
+            // Rebuild spatial index with new bounds
+            _spatialIndex.Rebuild(_widgets);
 
             // Clear any pending input events to prevent spurious activations
             // Resize events can cause the input buffer to have stale data

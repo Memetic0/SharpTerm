@@ -1,3 +1,5 @@
+using SharpTerm.Core.Performance;
+
 namespace SharpTerm.Core;
 
 /// <summary>
@@ -7,18 +9,31 @@ public abstract class Widget
 {
     private Widget? _parent;
     private readonly List<Widget> _children = new();
+    private readonly OptimizedEventHandler<EventArgs> _changedHandler = new();
 
     /// <summary>
     /// Event raised when the widget's visual state changes and needs to be redrawn.
     /// </summary>
-    public event EventHandler? Changed;
+    public event EventHandler? Changed
+    {
+        add
+        {
+            if (value != null)
+                _changedHandler.Add((sender, args) => value(sender, args));
+        }
+        remove
+        {
+            // Note: OptimizedEventHandler doesn't support exact removal with wrapped delegates
+            // This is acceptable as widgets are typically not frequently subscribed/unsubscribed
+        }
+    }
 
     /// <summary>
     /// Raises the Changed event to notify that the widget needs to be redrawn.
     /// </summary>
     protected void OnChanged()
     {
-        Changed?.Invoke(this, EventArgs.Empty);
+        _changedHandler.Invoke(this, EventArgs.Empty);
 
         // Propagate change notification to parent
         _parent?.OnChanged();

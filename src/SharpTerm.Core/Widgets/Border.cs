@@ -1,3 +1,5 @@
+using SharpTerm.Core.Performance;
+
 namespace SharpTerm.Core.Widgets;
 
 public enum BorderStyle
@@ -37,78 +39,100 @@ public class Border : Widget
 
         var chars = GetBorderChars(Style);
 
+        // Use SpanHelpers for efficient string creation
+        int interiorWidth = Bounds.Width - 2;
+        string interiorFill = interiorWidth > 0 ? SpanHelpers.Repeat(' ', interiorWidth) : string.Empty;
+
         // Fill interior with background color first
         for (int y = 1; y < Bounds.Height - 1; y++)
         {
-            int interiorWidth = Bounds.Width - 2;
             if (interiorWidth > 0)
             {
                 driver.SetCursorPosition(Bounds.X + 1, Bounds.Y + y);
-                driver.Write(new string(' ', interiorWidth), ForegroundColor, BackgroundColor);
+                driver.Write(interiorFill, ForegroundColor, BackgroundColor);
             }
         }
 
-        // Top border
-        driver.SetCursorPosition(Bounds.X, Bounds.Y);
-        driver.Write(chars.TopLeft.ToString(), ForegroundColor, BackgroundColor);
+        // Top border with ValueStringBuilder for efficient construction
+        Span<char> stackBuffer = stackalloc char[256];
+        var vsb = Bounds.Width <= 256
+            ? new ValueStringBuilder(stackBuffer)
+            : new ValueStringBuilder(Bounds.Width);
 
-        var topLine = new string(chars.Horizontal, Math.Max(0, Bounds.Width - 2));
-        if (!string.IsNullOrEmpty(Title) && Title.Length < Bounds.Width - 4)
+        try
         {
-            var titleText = $" {Title} ";
-            topLine =
-                titleText
-                + new string(chars.Horizontal, Math.Max(0, Bounds.Width - titleText.Length - 2));
-        }
-        driver.Write(topLine, ForegroundColor, BackgroundColor);
-        driver.Write(chars.TopRight.ToString(), ForegroundColor, BackgroundColor);
-
-        // Sides
-        for (int y = 1; y < Bounds.Height - 1; y++)
-        {
-            driver.SetCursorPosition(Bounds.X, Bounds.Y + y);
-            driver.Write(chars.Vertical.ToString(), ForegroundColor, BackgroundColor);
-            driver.SetCursorPosition(Bounds.X + Bounds.Width - 1, Bounds.Y + y);
-            driver.Write(chars.Vertical.ToString(), ForegroundColor, BackgroundColor);
-        }
-
-        // Bottom border
-        driver.SetCursorPosition(Bounds.X, Bounds.Y + Bounds.Height - 1);
-        driver.Write(chars.BottomLeft.ToString(), ForegroundColor, BackgroundColor);
-
-        var bottomLine = new string(chars.Horizontal, Math.Max(0, Bounds.Width - 2));
-        if (!string.IsNullOrEmpty(Subtitle) && Subtitle.Length < Bounds.Width - 4)
-        {
-            var subtitleText = $" {Subtitle} ";
-            bottomLine =
-                subtitleText
-                + new string(chars.Horizontal, Math.Max(0, Bounds.Width - subtitleText.Length - 2));
-        }
-        driver.Write(bottomLine, ForegroundColor, BackgroundColor);
-        driver.Write(chars.BottomRight.ToString(), ForegroundColor, BackgroundColor);
-
-        // Draw shadow if enabled
-        if (ShowShadow && Bounds.X + Bounds.Width < 100 && Bounds.Y + Bounds.Height < 50) // reasonable bounds
-        {
-            // Bottom shadow
-            if (Bounds.Y + Bounds.Height < 50)
+            // Build top line
+            vsb.Append(chars.TopLeft);
+            if (!string.IsNullOrEmpty(Title) && Title.Length < Bounds.Width - 4)
             {
-                driver.SetCursorPosition(Bounds.X + 1, Bounds.Y + Bounds.Height);
-                driver.Write(
-                    new string('░', Math.Min(Bounds.Width, 100 - Bounds.X - 1)),
-                    Color.DarkGray,
-                    Color.Black
-                );
+                vsb.Append(' ');
+                vsb.Append(Title);
+                vsb.Append(' ');
+                vsb.Append(chars.Horizontal, Math.Max(0, Bounds.Width - Title.Length - 4));
             }
-            // Right shadow
-            for (int y = 1; y < Bounds.Height && Bounds.Y + y < 50; y++)
+            else
             {
-                if (Bounds.X + Bounds.Width < 100)
+                vsb.Append(chars.Horizontal, Math.Max(0, Bounds.Width - 2));
+            }
+            vsb.Append(chars.TopRight);
+
+            driver.SetCursorPosition(Bounds.X, Bounds.Y);
+            driver.Write(vsb.ToString(), ForegroundColor, BackgroundColor);
+
+            // Sides
+            string verticalChar = chars.Vertical.ToString();
+            for (int y = 1; y < Bounds.Height - 1; y++)
+            {
+                driver.SetCursorPosition(Bounds.X, Bounds.Y + y);
+                driver.Write(verticalChar, ForegroundColor, BackgroundColor);
+                driver.SetCursorPosition(Bounds.X + Bounds.Width - 1, Bounds.Y + y);
+                driver.Write(verticalChar, ForegroundColor, BackgroundColor);
+            }
+
+            // Bottom border
+            vsb.Length = 0; // Reuse builder
+            vsb.Append(chars.BottomLeft);
+            if (!string.IsNullOrEmpty(Subtitle) && Subtitle.Length < Bounds.Width - 4)
+            {
+                vsb.Append(' ');
+                vsb.Append(Subtitle);
+                vsb.Append(' ');
+                vsb.Append(chars.Horizontal, Math.Max(0, Bounds.Width - Subtitle.Length - 4));
+            }
+            else
+            {
+                vsb.Append(chars.Horizontal, Math.Max(0, Bounds.Width - 2));
+            }
+            vsb.Append(chars.BottomRight);
+
+            driver.SetCursorPosition(Bounds.X, Bounds.Y + Bounds.Height - 1);
+            driver.Write(vsb.ToString(), ForegroundColor, BackgroundColor);
+
+            // Draw shadow if enabled
+            if (ShowShadow && Bounds.X + Bounds.Width < 100 && Bounds.Y + Bounds.Height < 50)
+            {
+                string shadowChar = "░";
+                // Bottom shadow
+                if (Bounds.Y + Bounds.Height < 50)
                 {
-                    driver.SetCursorPosition(Bounds.X + Bounds.Width, Bounds.Y + y);
-                    driver.Write("░", Color.DarkGray, Color.Black);
+                    driver.SetCursorPosition(Bounds.X + 1, Bounds.Y + Bounds.Height);
+                    string bottomShadow = SpanHelpers.Repeat('░', Math.Min(Bounds.Width, 100 - Bounds.X - 1));
+                    driver.Write(bottomShadow, Color.DarkGray, Color.Black);
+                }
+                // Right shadow
+                for (int y = 1; y < Bounds.Height && Bounds.Y + y < 50; y++)
+                {
+                    if (Bounds.X + Bounds.Width < 100)
+                    {
+                        driver.SetCursorPosition(Bounds.X + Bounds.Width, Bounds.Y + y);
+                        driver.Write(shadowChar, Color.DarkGray, Color.Black);
+                    }
                 }
             }
+        }
+        finally
+        {
+            vsb.Dispose();
         }
     }
 

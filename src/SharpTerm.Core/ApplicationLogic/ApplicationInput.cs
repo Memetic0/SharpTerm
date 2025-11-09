@@ -1,3 +1,5 @@
+using SharpTerm.Core.Performance;
+
 namespace SharpTerm.Core.ApplicationLogic;
 
 /// <summary>
@@ -8,7 +10,8 @@ internal static class InputProcessor
     internal static bool ProcessInput(
         ITerminalDriver driver,
         List<Widget> widgets,
-        HashSet<Widget> dirtyWidgets,
+        LockFreeDirtyTracker dirtyWidgets,
+        SpatialIndex spatialIndex,
         int focusedIndex,
         Action<string> debugLog,
         Action stopApplication,
@@ -66,10 +69,7 @@ internal static class InputProcessor
                         if (handled)
                         {
                             debugLog($"Dialog handled key: {key.Key}");
-                            lock (dirtyWidgets)
-                            {
-                                dirtyWidgets.Add(dialog);
-                            }
+                            dirtyWidgets.MarkDirty(dialog);
                             dialogHandled = true;
                             break;
                         }
@@ -91,10 +91,7 @@ internal static class InputProcessor
                         {
                             debugLog($"Global button shortcut: {button.InvokeKey} pressed for button '{button.Text}'");
                             button.InvokeClick();
-                            lock (dirtyWidgets)
-                            {
-                                dirtyWidgets.Add(button);
-                            }
+                            dirtyWidgets.MarkDirty(button);
                             buttonShortcutHandled = true;
                             break;
                         }
@@ -115,10 +112,7 @@ internal static class InputProcessor
                     if (keyHandled)
                     {
                         debugLog($"Key handled by widget at index {newFocusedIndex}");
-                        lock (dirtyWidgets)
-                        {
-                            dirtyWidgets.Add(widget);
-                        }
+                        dirtyWidgets.MarkDirty(widget);
                     }
                 }
             }
@@ -132,6 +126,7 @@ internal static class InputProcessor
                     HandleMouseScroll(
                         widgets,
                         dirtyWidgets,
+                        spatialIndex,
                         mouseEvent.X,
                         mouseEvent.Y,
                         mouseEvent.ScrollDelta,
@@ -146,6 +141,7 @@ internal static class InputProcessor
                     var oldFocusedIndex = newFocusedIndex;
                     HandleMouseClick(
                         widgets,
+                        spatialIndex,
                         mouseEvent.X,
                         mouseEvent.Y,
                         debugLog,
@@ -174,6 +170,7 @@ internal static class InputProcessor
 
     private static void HandleMouseClick(
         List<Widget> widgets,
+        SpatialIndex spatialIndex,
         int x,
         int y,
         Action<string> debugLog,
@@ -184,26 +181,25 @@ internal static class InputProcessor
         newFocusedIndex = -1;
         needsFullRedraw = false;
 
-        // Check if any clickable widget was clicked
-        for (int i = 0; i < widgets.Count; i++)
+        // Use spatial index for fast hit testing
+        var hitWidgets = spatialIndex.Query(x, y);
+
+        // Process widgets in reverse order (topmost first)
+        for (int i = hitWidgets.Count - 1; i >= 0; i--)
         {
-            var widget = widgets[i];
+            var widget = hitWidgets[i];
             if (!widget.Visible)
                 continue;
 
-            bool inBounds =
-                x >= widget.Bounds.X
-                && x < widget.Bounds.X + widget.Bounds.Width
-                && y >= widget.Bounds.Y
-                && y < widget.Bounds.Y + widget.Bounds.Height;
-
-            if (!inBounds)
+            // Find the widget index in the main list
+            int widgetIndex = widgets.IndexOf(widget);
+            if (widgetIndex == -1)
                 continue;
 
             if (widget is Widgets.Button button)
             {
-                debugLog($"Button clicked at ({x}, {y}) - widget index {i}");
-                newFocusedIndex = i;
+                debugLog($"Button clicked at ({x}, {y}) - widget index {widgetIndex}");
+                newFocusedIndex = widgetIndex;
                 button.IsFocused = true;
                 button.InvokeClick();
                 needsFullRedraw = true;
@@ -211,16 +207,16 @@ internal static class InputProcessor
             }
             else if (widget is Widgets.TextBox textBox)
             {
-                debugLog($"TextBox clicked at ({x}, {y}) - widget index {i}");
-                newFocusedIndex = i;
+                debugLog($"TextBox clicked at ({x}, {y}) - widget index {widgetIndex}");
+                newFocusedIndex = widgetIndex;
                 textBox.IsFocused = true;
                 needsFullRedraw = true;
                 return;
             }
             else if (widget is Widgets.List list)
             {
-                debugLog($"List clicked at ({x}, {y}) - widget index {i}");
-                newFocusedIndex = i;
+                debugLog($"List clicked at ({x}, {y}) - widget index {widgetIndex}");
+                newFocusedIndex = widgetIndex;
                 list.IsFocused = true;
                 int relativeY = y - widget.Bounds.Y;
                 list.HandleClick(relativeY);
@@ -229,8 +225,8 @@ internal static class InputProcessor
             }
             else if (widget is Widgets.VirtualList virtualList)
             {
-                debugLog($"VirtualList clicked at ({x}, {y}) - widget index {i}");
-                newFocusedIndex = i;
+                debugLog($"VirtualList clicked at ({x}, {y}) - widget index {widgetIndex}");
+                newFocusedIndex = widgetIndex;
                 virtualList.IsFocused = true;
                 int relativeY = y - widget.Bounds.Y;
                 virtualList.HandleClick(relativeY);
@@ -244,7 +240,8 @@ internal static class InputProcessor
 
     private static void HandleMouseScroll(
         List<Widget> widgets,
-        HashSet<Widget> dirtyWidgets,
+        LockFreeDirtyTracker dirtyWidgets,
+        SpatialIndex spatialIndex,
         int x,
         int y,
         int scrollDelta,
@@ -254,40 +251,33 @@ internal static class InputProcessor
     {
         needsFullRedraw = false;
 
-        // Check if scrolling over a List widget
-        for (int i = 0; i < widgets.Count; i++)
+        // Use spatial index for fast hit testing
+        var hitWidgets = spatialIndex.Query(x, y);
+
+        // Process widgets in reverse order (topmost first)
+        for (int i = hitWidgets.Count - 1; i >= 0; i--)
         {
-            var widget = widgets[i];
+            var widget = hitWidgets[i];
             if (!widget.Visible)
                 continue;
 
-            bool inBounds =
-                x >= widget.Bounds.X
-                && x < widget.Bounds.X + widget.Bounds.Width
-                && y >= widget.Bounds.Y
-                && y < widget.Bounds.Y + widget.Bounds.Height;
-
-            if (!inBounds)
+            // Find the widget index in the main list
+            int widgetIndex = widgets.IndexOf(widget);
+            if (widgetIndex == -1)
                 continue;
 
             if (widget is Widgets.List list)
             {
-                debugLog($"List scrolled at ({x}, {y}) - widget index {i}, delta={scrollDelta}");
+                debugLog($"List scrolled at ({x}, {y}) - widget index {widgetIndex}, delta={scrollDelta}");
                 list.HandleScroll(scrollDelta);
-                lock (dirtyWidgets)
-                {
-                    dirtyWidgets.Add(list);
-                }
+                dirtyWidgets.MarkDirty(list);
                 return;
             }
             else if (widget is Widgets.VirtualList virtualList)
             {
-                debugLog($"VirtualList scrolled at ({x}, {y}) - widget index {i}, delta={scrollDelta}");
+                debugLog($"VirtualList scrolled at ({x}, {y}) - widget index {widgetIndex}, delta={scrollDelta}");
                 virtualList.HandleScroll(scrollDelta);
-                lock (dirtyWidgets)
-                {
-                    dirtyWidgets.Add(virtualList);
-                }
+                dirtyWidgets.MarkDirty(virtualList);
                 return;
             }
         }

@@ -1,3 +1,5 @@
+using SharpTerm.Core.Performance;
+
 namespace SharpTerm.Core.Widgets;
 
 public enum TextAlignment
@@ -24,37 +26,42 @@ public class Label : Widget
         if (Bounds.Width <= 0 || Bounds.Height <= 0)
             return;
 
-        var lines = Text.Split('\n');
+        // Use zero-allocation text processing with SpanHelpers
+        ReadOnlySpan<char> textSpan = Text.AsSpan();
+        var lineEnumerator = TextProcessor.EnumerateLines(textSpan);
 
-        // Render each line within bounds
-        for (int i = 0; i < Bounds.Height; i++)
+        int lineIndex = 0;
+        foreach (var line in lineEnumerator)
+        {
+            if (lineIndex >= Bounds.Height)
+                break;
+
+            driver.SetCursorPosition(Bounds.X, Bounds.Y + lineIndex);
+
+            // Truncate line if needed
+            ReadOnlySpan<char> displayLine = line.Length > Bounds.Width
+                ? line[..Bounds.Width]
+                : line;
+
+            // Apply alignment using SpanHelpers (optimized string.Create internally)
+            string finalLine = Alignment switch
+            {
+                TextAlignment.Center => SpanHelpers.Center(displayLine, Bounds.Width),
+                TextAlignment.Right => SpanHelpers.PadLeft(displayLine, Bounds.Width),
+                _ => SpanHelpers.PadRight(displayLine, Bounds.Width)
+            };
+
+            driver.Write(finalLine, ForegroundColor, BackgroundColor);
+            lineIndex++;
+        }
+
+        // Fill remaining lines with background color using SpanHelpers
+        string emptyLine = SpanHelpers.Repeat(' ', Bounds.Width);
+
+        for (int i = lineIndex; i < Bounds.Height; i++)
         {
             driver.SetCursorPosition(Bounds.X, Bounds.Y + i);
-
-            if (i < lines.Length)
-            {
-                var line = lines[i];
-                if (line.Length > Bounds.Width)
-                {
-                    line = line.Substring(0, Bounds.Width);
-                }
-
-                // Apply alignment by adding padding
-                var displayLine = Alignment switch
-                {
-                    TextAlignment.Center => line.PadLeft((Bounds.Width + line.Length) / 2)
-                        .PadRight(Bounds.Width),
-                    TextAlignment.Right => line.PadLeft(Bounds.Width),
-                    _ => line.PadRight(Bounds.Width),
-                };
-
-                driver.Write(displayLine, ForegroundColor, BackgroundColor);
-            }
-            else
-            {
-                // Fill empty lines with background color
-                driver.Write(new string(' ', Bounds.Width), ForegroundColor, BackgroundColor);
-            }
+            driver.Write(emptyLine, ForegroundColor, BackgroundColor);
         }
     }
 }

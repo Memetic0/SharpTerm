@@ -4,9 +4,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>13.0</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Package Information -->
     <PackageId>SharpTerm.Core</PackageId>
-    <Version>1.0.2</Version>
+    <Version>1.0.3</Version>
     <Authors>Alex Barnes</Authors>
     <Company>E2E</Company>
     <Description>A modern, cross-platform Terminal User Interface (TUI) library for .NET 9 with rich widget support, event-driven architecture, and optimized rendering.</Description>
@@ -23,6 +24,8 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <!-- Build Settings -->
     <Deterministic>true</Deterministic>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
   </PropertyGroup>
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />

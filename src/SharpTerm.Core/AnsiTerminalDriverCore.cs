@@ -1,5 +1,6 @@
 using System.Text;
 using SharpTerm.Core.DriverLogic;
+using SharpTerm.Core.Performance;
 
 namespace SharpTerm.Core;
 
@@ -9,6 +10,7 @@ namespace SharpTerm.Core;
 public class AnsiTerminalDriver : ITerminalDriver
 {
     private readonly StringBuilder _buffer = new(4096);
+    private readonly AnsiCommandBatcher _batcher = new(4096);
     private readonly IPlatformProvider _platformProvider;
     private bool _isInitialized;
     private IntPtr _consoleInputHandle;
@@ -59,27 +61,31 @@ public class AnsiTerminalDriver : ITerminalDriver
         x = Math.Max(0, Math.Min(x, Width - 1));
         y = Math.Max(0, Math.Min(y, Height - 1));
 
-        // Use cached ANSI escape codes for better performance
-        _buffer.Append(Performance.AnsiCache.GetCursorPosition(x, y));
+        // Use AnsiCommandBatcher for stateful optimization (eliminates redundant cursor moves)
+        _batcher.SetCursorPosition(x, y);
     }
 
     public void Write(string text, Color foreground, Color background)
     {
-        // Use cached ANSI codes for efficiency
-        _buffer.Append(Performance.AnsiCache.GetForegroundColor(foreground));
+        // Use AnsiCommandBatcher for stateful optimization (eliminates redundant color changes)
+        _batcher.SetForegroundColor(foreground);
 
         // Only set background if not transparent (R=0, G=0, B=1)
         if (background.R != 0 || background.G != 0 || background.B != 1)
         {
-            _buffer.Append(Performance.AnsiCache.GetBackgroundColor(background));
+            _batcher.SetBackgroundColor(background);
         }
 
-        _buffer.Append(text);
-        _buffer.Append("\x1b[0m"); // Reset
+        _batcher.Write(text);
+        _batcher.Reset(); // Reset after each write for safety
     }
 
     public void Flush()
     {
+        // Flush AnsiCommandBatcher which handles auto-batching and state tracking
+        _batcher.Flush();
+
+        // Also flush old buffer for backward compatibility during transition
         if (_buffer.Length > 0)
         {
             Console.Write(_buffer.ToString());
@@ -91,7 +97,7 @@ public class AnsiTerminalDriver : ITerminalDriver
     {
         // Move cursor to home and clear from cursor to end of screen
         // This is faster and causes less flicker than \x1b[2J
-        _buffer.Append("\x1b[H\x1b[J");
+        _batcher.Write("\x1b[H\x1b[J");
     }
 
     public bool KeyAvailable => Console.KeyAvailable;
