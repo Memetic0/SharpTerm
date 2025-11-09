@@ -1,9 +1,12 @@
+using SharpTerm.Core.Performance;
+
 namespace SharpTerm.Core.Widgets;
 
 /// <summary>
-/// A scrollable list widget that displays items with selection and keyboard navigation.
+/// A high-performance list widget optimized for large datasets using virtual rendering.
+/// Only visible items are rendered, supporting millions of items efficiently.
 /// </summary>
-public class List : Widget
+public class VirtualList : Widget
 {
     private readonly List<string> _items = new();
     private int _selectedIndex = 0;
@@ -12,50 +15,25 @@ public class List : Widget
     private DateTime _lastClickTime = DateTime.MinValue;
     private const int DoubleClickThresholdMs = 500;
 
+    // Cache for rendered strings
+    private readonly Dictionary<int, string> _renderCache = new();
+    private int _lastRenderWidth = -1;
+
     public IReadOnlyList<string> Items => _items.AsReadOnly();
     public int SelectedIndex => _selectedIndex;
     public bool IsFocused { get; set; }
     public bool ShowScrollbar { get; set; } = true;
-    public bool UseAlternatingColors { get; set; } = true;
     public Color SelectedColor { get; set; } = Color.Blue;
     public Color AlternateRowColor { get; set; } = Color.DarkGray;
     public Color ScrollbarColor { get; set; } = Color.DarkGray;
 
-    /// <summary>
-    /// Event raised when the selected item changes.
-    /// </summary>
     public event EventHandler? SelectionChanged;
-
-    /// <summary>
-    /// Event raised when an item is activated (Enter key or double-click).
-    /// </summary>
     public event EventHandler<int>? ItemActivated;
 
     public void AddItem(string item)
     {
         _items.Add(item);
-        OnChanged();
-    }
-
-    public void RemoveItem(int index)
-    {
-        if (index >= 0 && index < _items.Count)
-        {
-            _items.RemoveAt(index);
-            if (_selectedIndex >= _items.Count)
-            {
-                _selectedIndex = Math.Max(0, _items.Count - 1);
-            }
-            AdjustScrollOffset();
-            OnChanged();
-        }
-    }
-
-    public void Clear()
-    {
-        _items.Clear();
-        _selectedIndex = 0;
-        _scrollOffset = 0;
+        InvalidateCache();
         OnChanged();
     }
 
@@ -65,7 +43,6 @@ public class List : Widget
         _items.Clear();
         _items.AddRange(items);
 
-        // If items were added, select the last one (the new item)
         if (_items.Count > previousCount && previousCount > 0)
         {
             _selectedIndex = _items.Count - 1;
@@ -76,50 +53,72 @@ public class List : Widget
         }
 
         AdjustScrollOffset();
+        InvalidateCache();
         OnChanged();
+    }
+
+    public void Clear()
+    {
+        _items.Clear();
+        _selectedIndex = 0;
+        _scrollOffset = 0;
+        InvalidateCache();
+        OnChanged();
+    }
+
+    private void InvalidateCache()
+    {
+        _renderCache.Clear();
+        _lastRenderWidth = -1;
     }
 
     public override void Render(ITerminalDriver driver)
     {
-        if (!Visible)
-            return;
-
-        // Don't render if bounds are invalid
-        if (Bounds.Width <= 0 || Bounds.Height <= 0)
+        if (!Visible || Bounds.Width <= 0 || Bounds.Height <= 0)
             return;
 
         int displayHeight = Bounds.Height;
-        int displayWidth =
-            ShowScrollbar && _items.Count > displayHeight ? Bounds.Width - 1 : Bounds.Width;
+        int displayWidth = ShowScrollbar && _items.Count > displayHeight
+            ? Bounds.Width - 1
+            : Bounds.Width;
 
-        // Ensure displayWidth is positive
         if (displayWidth <= 0)
             return;
 
-        // Render visible items
-        for (int i = 0; i < displayHeight && i < _items.Count; i++)
+        // Invalidate cache if width changed
+        if (_lastRenderWidth != displayWidth)
+        {
+            InvalidateCache();
+            _lastRenderWidth = displayWidth;
+        }
+
+        // VIRTUAL RENDERING: Only render visible items
+        int endIndex = Math.Min(_scrollOffset + displayHeight, _items.Count);
+
+        for (int i = 0; i < displayHeight; i++)
         {
             int itemIndex = _scrollOffset + i;
-            if (itemIndex >= _items.Count)
-                break;
 
             driver.SetCursorPosition(Bounds.X, Bounds.Y + i);
 
-            var item = _items[itemIndex];
-            var displayText =
-                item.Length > displayWidth
-                    ? item.Substring(0, displayWidth)
-                    : item.PadRight(displayWidth);
+            if (itemIndex >= _items.Count)
+            {
+                // Fill empty lines
+                driver.Write(SpanHelpers.Repeat(' ', displayWidth), ForegroundColor, BackgroundColor);
+                continue;
+            }
 
-            // Determine colors based on selection and alternating rows
-            Color bg,
-                fg;
+            // Get or create cached display text
+            string displayText = GetCachedDisplayText(itemIndex, displayWidth);
+
+            // Determine colors
+            Color bg, fg;
             if (itemIndex == _selectedIndex && IsFocused)
             {
                 bg = SelectedColor;
                 fg = Color.White;
             }
-            else if (UseAlternatingColors && itemIndex % 2 == 1)
+            else if (itemIndex % 2 == 1)
             {
                 bg = AlternateRowColor;
                 fg = ForegroundColor;
@@ -133,15 +132,6 @@ public class List : Widget
             driver.Write(displayText, fg, bg);
         }
 
-        // Fill empty lines
-        for (int i = _items.Count - _scrollOffset; i < displayHeight; i++)
-        {
-            if (i < 0)
-                continue;
-            driver.SetCursorPosition(Bounds.X, Bounds.Y + i);
-            driver.Write(new string(' ', displayWidth), ForegroundColor, BackgroundColor);
-        }
-
         // Render scrollbar if needed
         if (ShowScrollbar && _items.Count > displayHeight)
         {
@@ -149,32 +139,54 @@ public class List : Widget
         }
     }
 
+    private string GetCachedDisplayText(int itemIndex, int width)
+    {
+        // Check cache
+        if (_renderCache.TryGetValue(itemIndex, out var cached))
+        {
+            return cached;
+        }
+
+        // Generate display text using Span for efficiency
+        var item = _items[itemIndex];
+        string displayText;
+
+        if (item.Length > width)
+        {
+            displayText = SpanHelpers.Truncate(item.AsSpan(), width);
+        }
+        else
+        {
+            displayText = SpanHelpers.PadRight(item.AsSpan(), width);
+        }
+
+        // Cache only if reasonable cache size
+        if (_renderCache.Count < 1000)
+        {
+            _renderCache[itemIndex] = displayText;
+        }
+
+        return displayText;
+    }
+
     private void RenderScrollbar(ITerminalDriver driver, int displayHeight)
     {
         int scrollbarX = Bounds.X + Bounds.Width - 1;
 
-        // Calculate scrollbar thumb position and size
         float viewportRatio = (float)displayHeight / _items.Count;
         int thumbSize = Math.Max(1, (int)(displayHeight * viewportRatio));
-        float scrollRatio =
-            _items.Count > displayHeight
-                ? (float)_scrollOffset / (_items.Count - displayHeight)
-                : 0;
+        float scrollRatio = _items.Count > displayHeight
+            ? (float)_scrollOffset / (_items.Count - displayHeight)
+            : 0;
         int thumbPosition = (int)((displayHeight - thumbSize) * scrollRatio);
 
         for (int i = 0; i < displayHeight; i++)
         {
             driver.SetCursorPosition(scrollbarX, Bounds.Y + i);
 
-            char scrollChar;
-            if (i >= thumbPosition && i < thumbPosition + thumbSize)
-            {
-                scrollChar = '█'; // Thumb
-            }
-            else
-            {
-                scrollChar = '│'; // Track
-            }
+            char scrollChar = (i >= thumbPosition && i < thumbPosition + thumbSize)
+                ? '█'
+                : '│';
 
             driver.Write(scrollChar.ToString(), ScrollbarColor, BackgroundColor);
         }
@@ -186,6 +198,7 @@ public class List : Widget
             return false;
 
         bool handled = false;
+        int oldIndex = _selectedIndex;
 
         switch (key.Key)
         {
@@ -193,9 +206,6 @@ public class List : Widget
                 if (_selectedIndex > 0)
                 {
                     _selectedIndex--;
-                    AdjustScrollOffset();
-                    SelectionChanged?.Invoke(this, EventArgs.Empty);
-                    OnChanged();
                     handled = true;
                 }
                 break;
@@ -204,64 +214,41 @@ public class List : Widget
                 if (_selectedIndex < _items.Count - 1)
                 {
                     _selectedIndex++;
-                    AdjustScrollOffset();
-                    SelectionChanged?.Invoke(this, EventArgs.Empty);
-                    OnChanged();
                     handled = true;
                 }
                 break;
 
             case ConsoleKey.Home:
-                if (_selectedIndex != 0)
-                {
-                    _selectedIndex = 0;
-                    _scrollOffset = 0;
-                    SelectionChanged?.Invoke(this, EventArgs.Empty);
-                    OnChanged();
-                    handled = true;
-                }
+                _selectedIndex = 0;
+                _scrollOffset = 0;
+                handled = true;
                 break;
 
             case ConsoleKey.End:
-                if (_selectedIndex != _items.Count - 1)
-                {
-                    _selectedIndex = _items.Count - 1;
-                    AdjustScrollOffset();
-                    SelectionChanged?.Invoke(this, EventArgs.Empty);
-                    OnChanged();
-                    handled = true;
-                }
+                _selectedIndex = _items.Count - 1;
+                handled = true;
                 break;
 
             case ConsoleKey.PageUp:
-                if (_selectedIndex > 0)
-                {
-                    _selectedIndex = Math.Max(0, _selectedIndex - Bounds.Height);
-                    AdjustScrollOffset();
-                    SelectionChanged?.Invoke(this, EventArgs.Empty);
-                    OnChanged();
-                    handled = true;
-                }
+                _selectedIndex = Math.Max(0, _selectedIndex - Bounds.Height);
+                handled = true;
                 break;
 
             case ConsoleKey.PageDown:
-                if (_selectedIndex < _items.Count - 1)
-                {
-                    _selectedIndex = Math.Min(_items.Count - 1, _selectedIndex + Bounds.Height);
-                    AdjustScrollOffset();
-                    SelectionChanged?.Invoke(this, EventArgs.Empty);
-                    OnChanged();
-                    handled = true;
-                }
+                _selectedIndex = Math.Min(_items.Count - 1, _selectedIndex + Bounds.Height);
+                handled = true;
                 break;
 
             case ConsoleKey.Enter:
-                if (_selectedIndex >= 0 && _selectedIndex < _items.Count)
-                {
-                    ItemActivated?.Invoke(this, _selectedIndex);
-                    handled = true;
-                }
-                break;
+                ItemActivated?.Invoke(this, _selectedIndex);
+                return true;
+        }
+
+        if (handled && oldIndex != _selectedIndex)
+        {
+            AdjustScrollOffset();
+            SelectionChanged?.Invoke(this, EventArgs.Empty);
+            OnChanged();
         }
 
         return handled;
@@ -269,7 +256,6 @@ public class List : Widget
 
     private void AdjustScrollOffset()
     {
-        // Keep selected item visible
         if (_selectedIndex < _scrollOffset)
         {
             _scrollOffset = _selectedIndex;
@@ -280,17 +266,13 @@ public class List : Widget
         }
     }
 
-    /// <summary>
-    /// Handles mouse click on the list.
-    /// </summary>
     internal void HandleClick(int relativeY)
     {
         int clickedIndex = _scrollOffset + relativeY;
         if (clickedIndex >= 0 && clickedIndex < _items.Count)
         {
             var now = DateTime.Now;
-            bool isDoubleClick =
-                clickedIndex == _lastClickIndex
+            bool isDoubleClick = clickedIndex == _lastClickIndex
                 && (now - _lastClickTime).TotalMilliseconds < DoubleClickThresholdMs;
 
             _selectedIndex = clickedIndex;
@@ -300,7 +282,7 @@ public class List : Widget
             if (isDoubleClick)
             {
                 ItemActivated?.Invoke(this, _selectedIndex);
-                _lastClickIndex = -1; // Reset to prevent triple-click
+                _lastClickIndex = -1;
             }
             else
             {
@@ -310,13 +292,8 @@ public class List : Widget
         }
     }
 
-    /// <summary>
-    /// Handles mouse scroll on the list.
-    /// </summary>
     internal void HandleScroll(int scrollDelta)
     {
-        // Positive delta = scroll up (move selection up)
-        // Negative delta = scroll down (move selection down)
         int newIndex = _selectedIndex - scrollDelta;
         newIndex = Math.Clamp(newIndex, 0, _items.Count - 1);
 

@@ -100,7 +100,7 @@ All widgets inherit from the base `Widget` class and implement the `Render` meth
 Clone and build:
 
 ```bash
-git clone https://github.com/yourusername/SharpTerm.git
+git clone https://github.com/Memetic0/SharpTerm.git
 cd SharpTerm
 dotnet build
 ```

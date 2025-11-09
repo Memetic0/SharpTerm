@@ -49,7 +49,7 @@ public interface ITerminalDriver : IDisposable
     /// Reads a key from the console.
     /// </summary>
     ConsoleKeyInfo ReadKey(bool intercept = true);
-    
+
     /// <summary>
     /// Tries to read any console event. Returns the event type and outputs the specific event data.
     /// </summary>
@@ -69,5 +69,5 @@ public enum ConsoleEventType
     None,
     Keyboard,
     Mouse,
-    Other
+    Other,
 }
